@@ -82,6 +82,7 @@ PODS = {
                 "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCt8MMuB/uLEQIj9p/P563hAU5oIlzw03nOoUFTjYbo6Kk6Gt7yBVDZD5xqWdLWcyw4OSefwCFeiWE+s6fcP4JUns1e8/P3yUYtgBWtj9YTQXn6JgY4IZ/VyKWkoEWmTYL/AS1kxAD9r9Hpmb5U/oRhdOokmGvLhHabj8InsNvHEKtJcleXcQXz0HV+jeq4rqmgIi46bucpB3eOYV+4rlehKIi52ClsAWbGEQGHCAg0XKP3UtWjYiR7NYP00kdS+EuThc1PMaZChrceP/BHfxDkC2XQezU+0WOAMiZQ/NyRnJ6NLaPd9viE27ZMxbQeR3vmEsUn1UptSSe3h3ET1rkT RunPod-Key-Go"
             ],
             volume_size=500,
+            ports="22/tcp,8188/http,8288/http,8888/http",
         )
     )
 }
@@ -102,13 +103,13 @@ class RunPodManager:
                         
             create_command = [
                 'runpodctl', 'create', 'pod',
-                '--name', str(self.config.creation_config.name),
-                '--imageName', str(self.config.creation_config.image_name),
-                '--ports', str(self.config.creation_config.ports),
-                '--networkVolumeId', str(self.config.creation_config.network_volume_id),
-                '--volumePath', str(self.config.creation_config.volume_path),
+                '--name', self.config.creation_config.name,
+                '--imageName', self.config.creation_config.image_name,
+                '--ports', self.config.creation_config.ports,
+                '--networkVolumeId', self.config.creation_config.network_volume_id,
+                '--volumePath', self.config.creation_config.volume_path,
                 '--gpuCount', str(self.config.creation_config.gpu_count),
-                '--gpuType', str(self.config.creation_config.gpu_type),
+                '--gpuType', self.config.creation_config.gpu_type,
                 '--containerDiskSize', str(self.config.creation_config.container_disk_size),
                 '--volumeSize', str(self.config.creation_config.volume_size),
                 '--vcpu', str(self.config.creation_config.vcpus),
@@ -135,10 +136,10 @@ class RunPodManager:
             raise Exception("Failed to extract pod ID from creation output")
 
         except subprocess.CalledProcessError as e:
-            print(f"CalledProcessError occurred: {str(e)}")  # Debug print 7
+            print(f"CalledProcessError occurred: {str(e)}")
             raise Exception(f"Failed to create RunPod instance: {e.stderr}")
         except Exception as e:
-            print(f"Unexpected error occurred: {str(e)}")  # Debug print 8
+            print(f"Unexpected error occurred: {str(e)}")
             raise
 
     def get_pod_ssh_details(self) -> Optional[Tuple[str, str]]:
@@ -232,6 +233,24 @@ class RunPodManager:
             return True
         except subprocess.CalledProcessError as e:
             raise Exception(f"Failed to stop RunPod instance: {e.stderr}")
+
+    def remove_instance(self) -> bool:
+        """Remove the RunPod instance"""
+        if not self.config.pod_id:
+            raise Exception("No pod ID available")
+
+        try:
+            subprocess.run(
+                ['runpodctl', 'remove', 'pod', self.config.pod_id],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            self.config.pod_id = None
+            return True
+
+        except subprocess.CalledProcessError as e:
+            raise Exception(f"Failed to remove RunPod instance: {e.stderr}")
 
     def check_instance_status(self) -> bool:
         """Check if the instance is running"""
@@ -385,6 +404,24 @@ def create_stop_command(instance_name: str):
     
     return stop_handler
 
+def create_remove_command(instance_name: str):
+    """Create a remove command for a specific instance"""
+    def remove_handler(ack, say, command):
+        ack()
+        pod_manager = RunPodManager(PODS[instance_name])
+        
+        try:
+            if not pod_manager.config.pod_id:
+                say(f"No pod ID available for {instance_name}. Please create the pod first using /{instance_name}_create")
+                return
+
+            if pod_manager.remove_instance():
+                say(f"{instance_name} has been removed successfully.")
+        except Exception as e:
+            say(f"Error removing {instance_name}: {str(e)}")
+    
+    return remove_handler
+
 # Create combined launch command that handles creation and startup
 def create_combined_launch_command(instance_name: str):
     """Create a command that handles both creation and launch for a specific instance"""
@@ -446,7 +483,7 @@ def create_combined_launch_command(instance_name: str):
 for instance_name in PODS.keys():
     app.command(f"/{instance_name}_start")(create_combined_launch_command(instance_name))
     app.command(f"/{instance_name}_status")(create_status_command(instance_name))
-    app.command(f"/{instance_name}_stop")(create_stop_command(instance_name))
+    app.command(f"/{instance_name}_stop")(create_remove_command(instance_name))
 
 if __name__ == "__main__":
     handler = SocketModeHandler(app, os.environ["RUNPOD_SLACK_APP_TOKEN"])
